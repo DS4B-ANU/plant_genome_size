@@ -1,0 +1,299 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# What this is
+
+This is an *example* of how to start your final projects. I've been interested in plant genome size for years, so I wanted to start with the question "What are the correlates of plant genome size", and (obviously, I hope) I decided to use AusTraits for that.
+
+For your final project, you will need to develop your own questions and research them, following the instructions provided. You must not use the same question here (i.e. correaltes of plant genome size). 
+
+# Getting ideas...
+
+OK, so having forced everyone to pay attention to plant genome size, we next looked up tons of papers. The point is to find research from the primary literature about what *kinds* of traits other people have found to correlate with plant genome size, and then try to undertstand what interesting biology might underpin all of this.
+
+We used google scholar and ChatGPT to help us. The prompts that worked for chatGPT were:
+
+"Can you give me previous studies about plant genome size correlates?"
+
+and then
+
+"Can you give me the top 10 papers you think I should read?"
+
+Here's what it told me:
+
+https://chat.openai.com/share/49c74087-655a-40e0-b8cc-5b207c782c2f
+
+
+Our list of papers is here: https://github.com/DS4B-ANU/plant_genome_size/issues/1
+
+When you do this, you should take some time to read through the papers you find! It takes a while to read a paper carefully, so do give yourself time. But don't feel that you have to read or undertsand every word. 
+
+And watch out for cases where someone has a significant result (in terms of the p value) but a biologically unimportant one (in terms of the effect size).
+
+# Getting a list of traits
+
+Based on those papers, we came up with a whole heap of traits we *could* look at:
+
+Traits to look at - 
+
+* Cell volume: larger genomes, bigger cells
+* Stress tolerance: 
+* Climate (mean temp of coldes quarter):
+* Seed mass: larger genomes, bigger seeds
+* Plant height: larger genomes, bigger plants
+* leaf mass area: ?
+* leaf surface conducance; larger genomes, lower conductance
+* cell division rate: larger genomes, slower division
+* wood density: larger genomes, less dense wood
+* maximum photosynthetic rate: larger genomes, slower rate
+
+Not all of these are in AusTraits of course. If I were doing this for real, I'd probably try to use ALA as well, because I thought those climate variables looked very interesting, and the ecology papers were also fascinating.
+
+Now we need to figure out what traits we can look at using AusTraits.
+
+# Load the data
+
+```{r}
+library(tidyverse)
+library(austraits)
+austraits <- load_austraits(version = "4.1.0")
+```
+
+# Get genome size
+
+```{r}
+genome_size <- 
+  austraits %>% 
+     extract_trait(trait_names = c("genome_size"))
+
+view(genome_size$traits)
+```
+
+Explore gs
+
+```{r}
+hist(genome_size$traits$value[which(genome_size$traits$value<5)])
+```
+Look at the tree genera that have lots of data...
+
+
+```{r}
+
+genome_size$traits$genus <- str_split(genome_size$traits$taxon_name, " ", simplify = TRUE)[,1]
+
+view(genome_size$traits)
+
+genome_size$traits <- genome_size$traits %>%
+  filter(genus %in% c("Acacia", "Corymbia", "Eucalyptus"))
+
+ggplot(genome_size$traits, aes(x = value)) +
+  geom_histogram() +
+  facet_wrap(~genus, ncol = 1, scales = "free_y")
+```
+Here we discussed that it will be important to treat these genera separately for our analysis, since they obviously all have very different genome size distributions, and this is probably true for other traits too.
+
+# Get species medians
+
+Note that I have ignored data cleaning here, because it would be impractical/very boring to do this in a workshop infront of everyone. However, you are expected to put a reasonable effort into checking and cleaning your data, as covered in week 7!
+
+Here I'll just use medians, and pretend the data are clean!
+
+```{r}
+source("~/Documents/GitHub/DS4B/Week8/workshop/extra_functions.R")
+
+# get the taxa that have genome size
+gs_taxa <- genome_size$traits$taxon_name
+
+# pull those taxa out of the full austraits database
+gs_austraits <-
+  austraits %>%
+     extract_taxa(taxon_name = gs_taxa)
+
+# see what other traits are availble for those taxa
+total_unique_taxa <- n_distinct(gs_austraits$traits$taxon_name)
+
+gs_austraits_summary <- gs_austraits$traits %>%
+  group_by(trait_name) %>%
+  summarise(
+    num_observations = n(),
+    num_unique_taxa = n_distinct(taxon_name),
+    taxon_coverage = num_unique_taxa / total_unique_taxa
+  ) %>%
+  arrange(desc(taxon_coverage))
+
+head(gs_austraits_summary, n = 20)
+
+view(gs_austraits_summary)
+```
+
+Now we looked through the available traits, and compared them to the traits we wanted to look at (above), and came up with the following list:
+
+```{r}
+traits_of_interest = c("plant_height",
+                       "seed_dry_mass",
+                       "leaf_mass_per_area",
+                       "wood_density",
+                       "reproductive_maturity",
+                       "seed_germination",
+                       "genome_size")
+
+
+# get the means for those traits
+trait_means <- austraits_weighted_means(gs_austraits, traits_of_interest)
+
+```
+
+At this point, you are ready to write your questions/aims and justifications for which traits you used. Remember that for every inclusion, you should make reference to the primary literature in your justification, as well as discussing the biology very briefly.
+
+# Correlations
+
+Now we want to look at correlations.
+
+First we wrangle the data to tidy format, and then split it into the two genera with lots of species:
+
+```{r}
+wide_trait_medians <- trait_means %>%
+  select(taxon_name, trait_name, median) %>%
+  pivot_wider(names_from = trait_name, values_from = median)
+
+
+wide_trait_medians$genus <- str_split(wide_trait_medians$taxon_name, " ", simplify = TRUE)[,1]
+
+acacia <- wide_trait_medians %>% 
+  filter(genus == "Acacia")
+
+eucalyptus <- wide_trait_medians %>% 
+  filter(genus == "Eucalyptus")
+
+```
+
+
+Now what you would do in a real EDA is analyse for each of those genera how each of the traits of interest correlates with genome size. In the workshop we didn't have time to do all of that, but here are a couple of examples:
+
+
+## Seed mass
+
+Let's plot seed mass vs. genome size for each genus:
+```{r}
+ggplot(wide_trait_medians, aes(x = genome_size, y = seed_dry_mass)) +
+  geom_point(size = 0.01) +
+  facet_wrap(~genus, ncol = 2, scales = "free") +
+  geom_smooth(method = 'lm')
+
+```
+
+You will notice immediately the the Euc seed masses are all bunched up at small values. So we should probably log the seed mass values here.
+
+
+```{r}
+ggplot(wide_trait_medians, aes(x = genome_size, y = seed_dry_mass)) +
+  geom_point(size = 0.01) +
+  scale_y_log10() +
+  facet_wrap(~genus, ncol = 2, scales = "free") +
+  geom_smooth(method = 'lm')
+```
+
+That's better. Now we can fit linear models like this
+
+```{r}
+gs_sm_acacia = lm(data = acacia, genome_size ~ seed_dry_mass)
+gs_sm_euc = lm(data = eucalyptus, genome_size ~ seed_dry_mass)
+
+# summarise
+summary(gs_sm_acacia)
+summary(gs_sm_euc)
+
+```
+
+Any time you fit a linear model, you should check the diagnostic plots:
+
+```{r}
+plot(gs_sm_acacia, which = 1:6)
+plot(gs_sm_euc, which = 1:6)
+```
+
+You should have a read of how to interpret these plots, but Cook's distance being larger then 4/N (where N is the number of data points) is a good rule of thumb for defining an outlier. If you find outliers, it is good practice to repeat the modelling, and then report the results with and without outliers. (You can also double check the raw data to see if the outliers are just bad data - in this case it's OK to then just remove them). 
+
+## Wood density
+
+```{r}
+ggplot(wide_trait_medians, aes(x = genome_size, y = wood_density)) +
+  geom_point(size = 1) +
+  scale_y_log10() +
+  facet_wrap(~genus, ncol = 2, scales = "free") +
+  geom_smooth(method = 'lm')
+
+
+ggplot(eucalyptus, aes(x = genome_size, y = wood_density)) +
+  geom_point(size = 1) +
+  scale_y_log10() +
+  geom_smooth(method = 'lm')
+```
+
+These plots look OK - a linear model looks reasonable. Let's proceed with modelling as before
+
+```{r}
+gs_wd_acacia <- lm(data = acacia, genome_size ~ wood_density)
+gs_wd_euc <- lm(data = eucalyptus, genome_size ~ wood_density)
+
+summary(gs_wd_acacia)
+summary(gs_wd_euc)
+
+plot(gs_wd_acacia, which = 1:6)
+plot(gs_wd_euc, which = 1:6)
+
+```
+
+Remarkable! (Literarlly). 
+
+There's a very strong **positive** correlation between wood density and genome size in eucs, but *not* in acacias. This is quite amazing. And completely unexpected.
+
+
+# The rest of the traits
+
+Now you would do the same thing for all the other traits you're interested in. But as always, be judicious - the more traits you look at, the more tests you do, and the more likely you are to get spurious correlations (see week 1 and week 2).
+
+And remember to report and discuss both p values **AND** effect sizes and their confidence intervals. Brush up on your knowlege of the latter from the readings. It's important to get it right.
+
+# Full model
+Once you've done all the traits individually, you can pick the biologically important ones to add to a multiple regression.
+
+For example, if we'd found that wood density, lma, and seed_germination were all biologically important (i.e. big effect sizes, as well as significant p values), we could include them in a model together like this. We may want to compare eucs and acacias here too, since we know that the wood density result is there for eucs, but not for acacias...
+
+```{r}
+
+euc_lm <- lm(data = eucalyptus, genome_size ~ 
+               wood_density +
+               leaf_mass_per_area +
+               seed_germination)
+
+acacia_lm <- lm(data = acacia, genome_size ~ 
+               wood_density +
+               leaf_mass_per_area +
+               seed_germination)
+
+summary(euc_lm)
+summary(acacia_lm)
+```
+
+
+You can see that nothing is significant for acacias (as expected) and that wood density is significant (statistically and biologically) for eucs, but not the other traits. Remarkably for eucs, these three traits combine to explain ~42% of the variation in genome size. But we know that most of that comes from wood density.
+
+# Explaining it
+
+The fun part is to come up with an explanation. For this, you need to think, read, think, read, and keep doing that. 
+
+This is where you make your conclusions. You will need to make reference to the *biology* and the primary literature here. 
+
+In this case, we need to come up with hypotheses to explain:
+
+* Why wood density is positively correlated to genome size in Eucaltypus species
+* Why this correlation is *absent* in Acacia species
+
+This is challenging! But one thing you can aim for is to come up with some plausible hypotheses, and then see if you can find any more infomration in the database(s) or the literature that will help you judge if your hypotheses can be rejected.
+
+
